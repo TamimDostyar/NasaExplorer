@@ -1,0 +1,1 @@
+mvn clean package && mkdir -p dist && cp target/nasa-explorer-1.0-SNAPSHOT.jar dist/ && jpackage --name NasaExplorer --input dist --main-jar nasa-explorer-1.0-SNAPSHOT.jar --main-class com.nasa.Main --type dmg --icon src/main/resources/nasa-icon.icns --mac-package-identifier com.yourdomain.nasaexplorer --mac-package-name NasaExplorer --dest dist
