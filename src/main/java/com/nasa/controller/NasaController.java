@@ -46,6 +46,11 @@ public class NasaController {
 
     private String loadApiKey() {
         try {
+            // WARNING: This is a personal-use fallback API key. 
+            // DO NOT distribute this code or make it public.
+            // Remove this key before sharing the code.
+            final String PERSONAL_API_KEY = "DEMO_KEY";
+
             // Try loading from environment variable first
             String apiKey = System.getenv("NASA_API_KEY");
             if (apiKey != null && !apiKey.isEmpty()) {
@@ -76,20 +81,13 @@ public class NasaController {
                 }
             }
 
-            // If no API key found, show an error dialog
-            SwingUtilities.invokeLater(() -> {
-                JOptionPane.showMessageDialog(view,
-                    "Please create a .env file in your home directory with your NASA API key:\n" +
-                    "NASA_API_KEY=your_api_key_here\n\n" +
-                    "You can get an API key from: https://api.nasa.gov/",
-                    "API Key Not Found",
-                    JOptionPane.ERROR_MESSAGE);
-            });
+            // Return the personal fallback API key if no other key is found
+            LOGGER.info("Using personal fallback API key");
+            return PERSONAL_API_KEY;
 
-            throw new RuntimeException("Failed to load API key from .env file");
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error loading API key", e);
-            throw new RuntimeException("Failed to load API key from .env file: " + e.getMessage());
+            throw new RuntimeException("Failed to load API key: " + e.getMessage());
         }
     }
     
@@ -140,18 +138,48 @@ public class NasaController {
     private String parseAPODResponse(String response) {
         try {
             JsonNode root = objectMapper.readTree(response);
-            String mediaUrl = root.get("url").asText();
-            String explanation = root.get("explanation").asText();
-            String title = root.get("title").asText();
-            String mediaType = root.get("media_type").asText();
+            StringBuilder result = new StringBuilder();
+
+            // Check if we got an error response
+            if (root.has("error")) {
+                return "API Error: " + root.get("error").get("message").asText();
+            }
+
+            // Get URL (required field)
+            JsonNode urlNode = root.get("url");
+            if (urlNode == null) {
+                return "Error: No media URL found in the response";
+            }
+            String mediaUrl = urlNode.asText();
+
+            // Get title (optional)
+            JsonNode titleNode = root.get("title");
+            String title = titleNode != null ? titleNode.asText() : "No title available";
+            result.append("Title: ").append(title).append("\n\n");
+
+            // Get explanation (optional)
+            JsonNode explanationNode = root.get("explanation");
+            String explanation = explanationNode != null ? explanationNode.asText() : "No explanation available";
+            result.append("Explanation: ").append(explanation);
+
+            // Get media type (optional, default to image)
+            JsonNode mediaTypeNode = root.get("media_type");
+            String mediaType = mediaTypeNode != null ? mediaTypeNode.asText() : "image";
             
             // Handle different media types
             boolean isVideo = "video".equals(mediaType);
             view.displayMedia(mediaUrl, isVideo);
             
-            return String.format("Title: %s\n\nExplanation: %s", title, explanation);
+            // Add date if available
+            JsonNode dateNode = root.get("date");
+            if (dateNode != null) {
+                result.append("\n\nDate: ").append(dateNode.asText());
+            }
+
+            return result.toString();
         } catch (Exception e) {
-            return "Error parsing APOD response: " + e.getMessage();
+            LOGGER.log(Level.SEVERE, "Error parsing APOD response", e);
+            return "Error parsing APOD response: " + e.getMessage() + "\nResponse: " + response;
         }
     }
 
@@ -261,18 +289,53 @@ public class NasaController {
     private String parseNEOResponse(String response) {
         try {
             JsonNode root = objectMapper.readTree(response);
+            
+            // Check if we got an error response
+            if (root.has("error")) {
+                return "API Error: " + root.get("error").get("message").asText();
+            }
+            
+            // Get near earth objects
             JsonNode nearEarthObjects = root.get("near_earth_objects");
+            if (nearEarthObjects == null) {
+                return "No near earth objects data found in the response";
+            }
+
             StringBuilder result = new StringBuilder("Near Earth Objects:\n\n");
             
+            // If no fields, check if it's an array
+            if (!nearEarthObjects.isObject()) {
+                return "Unexpected NEO data format in the response";
+            }
+
             nearEarthObjects.fields().forEachRemaining(entry -> {
                 String date = entry.getKey();
                 JsonNode objects = entry.getValue();
-                result.append(String.format("Date: %s - Found %d objects\n", date, objects.size()));
+                if (objects != null && objects.isArray()) {
+                    result.append(String.format("Date: %s - Found %d objects\n", date, objects.size()));
+                    
+                    // Add details for each object
+                    for (int i = 0; i < objects.size(); i++) {
+                        JsonNode neo = objects.get(i);
+                        String name = neo.get("name") != null ? neo.get("name").asText() : "Unknown";
+                        JsonNode diameter = neo.path("estimated_diameter").path("meters").path("estimated_diameter_max");
+                        String size = diameter.isMissingNode() ? "Unknown" : String.format("%.2f meters", diameter.asDouble());
+                        JsonNode hazardous = neo.get("is_potentially_hazardous_asteroid");
+                        boolean isHazardous = hazardous != null && hazardous.asBoolean();
+                        
+                        result.append(String.format("  - %s (Size: %s)%s\n", 
+                            name, 
+                            size,
+                            isHazardous ? " ⚠️ Potentially Hazardous" : ""));
+                    }
+                    result.append("\n");
+                }
             });
             
             return result.toString();
         } catch (Exception e) {
-            return "Error parsing NEO response: " + e.getMessage();
+            LOGGER.log(Level.SEVERE, "Error parsing NEO response", e);
+            return "Error parsing NEO response: " + e.getMessage() + "\nResponse: " + response;
         }
     }
 
